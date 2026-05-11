@@ -2,164 +2,185 @@ package storage
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:embed schema.sql
-var schemaSQL string
-
-type DB struct{ Pool *pgxpool.Pool }
-
-type LogEntry struct {
-	Time                                time.Time
-	TenantID, ServiceID, Level, Message string
-	Metadata                            []byte
-}
-type MetricPoint struct {
-	Time                            time.Time
-	TenantID, ServiceID, MetricName string
-	Value                           float64
-	Labels                          []byte
+// DB represents a database connection pool.
+type DB struct {
+	Pool *pgxpool.Pool
 }
 
-type DashboardSnapshot struct {
-	Latency   float64       `json:"latency"`
-	CPU       float64       `json:"cpu"`
-	Memory    float64       `json:"memory"`
-	Metrics   []MetricPoint `json:"metrics"`
-	Logs      []LogEntry    `json:"logs"`
-	Anomalies []Anomaly     `json:"anomalies"`
-}
-type Anomaly struct {
-	ID, TenantID, ServiceID, AnomalyType, Description, RootCauseSummary, LikelyCause, SuggestedFix, Severity string
-	DetectedAt                                                                                               time.Time
-}
-type Service struct {
-	ID, TenantID, Name string
-	CreatedAt          time.Time
-}
-
+// NewDB creates a new database connection pool.
 func NewDB(ctx context.Context, connString string) (*DB, error) {
-	cfg, err := pgxpool.ParseConfig(connString)
+	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to connect to database: %w", err)
 	}
-	cfg.MaxConns = 25
-	cfg.MinConns = 5
-	cfg.MaxConnLifetime = time.Hour
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("unable to connect: %w", err)
-	}
+
 	if err := pool.Ping(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("database unreachable: %w", err)
 	}
+
 	return &DB{Pool: pool}, nil
 }
-func (db *DB) Close()                         { db.Pool.Close() }
-func (db *DB) Ping(ctx context.Context) error { return db.Pool.Ping(ctx) }
+
+// Close closes the database connection pool.
+func (db *DB) Close() {
+	db.Pool.Close()
+}
+
+// RunMigrations runs schema.sql against the database.
 func (db *DB) RunMigrations(ctx context.Context) error {
-	_, err := db.Pool.Exec(ctx, schemaSQL)
-	return err
-}
-func (db *DB) InsertLog(ctx context.Context, l LogEntry) error {
-	_, err := db.Pool.Exec(ctx, "INSERT INTO log_entries (time, tenant_id, service_id, level, message, metadata) VALUES ($1,$2,$3,$4,$5,$6)", l.Time, l.TenantID, l.ServiceID, l.Level, l.Message, l.Metadata)
-	return err
-}
-func (db *DB) InsertMetric(ctx context.Context, m MetricPoint) error {
-	_, err := db.Pool.Exec(ctx, "INSERT INTO metric_points (time, tenant_id, service_id, metric_name, value, labels) VALUES ($1,$2,$3,$4,$5,$6)", m.Time, m.TenantID, m.ServiceID, m.MetricName, m.Value, m.Labels)
-	return err
-}
-func (db *DB) GetRecentLogs(ctx context.Context, tenantID, serviceID string, limit int) ([]LogEntry, error) {
-	q := "SELECT l.time, s.tenant_id::text, l.service_id::text, l.level, l.message, l.metadata FROM log_entries l JOIN services s ON s.id=l.service_id WHERE s.tenant_id=$1"
-	args := []interface{}{tenantID}
-	if serviceID != "" {
-		q += " AND l.service_id=$2"
-		args = append(args, serviceID)
+	schema, err := os.ReadFile("internal/storage/schema.sql")
+	if err != nil {
+		return fmt.Errorf("failed to read schema file: %w", err)
 	}
-	q += " ORDER BY l.time DESC"
-	if limit > 0 {
-		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
-		args = append(args, limit)
-	}
-	rows, err := db.Pool.Query(ctx, q, args...)
+	_, err = db.Pool.Exec(ctx, string(schema))
+	return err
+}
+
+// LogEntry struct
+type LogEntry struct {
+	Time      time.Time
+	ServiceID string
+	Level     string
+	Message   string
+	Metadata  []byte
+}
+
+// InsertLog inserts a log entry into the timeseries DB.
+func (db *DB) InsertLog(ctx context.Context, log LogEntry) error {
+	_, err := db.Pool.Exec(ctx,
+		"INSERT INTO log_entries (time, service_id, level, message, metadata) VALUES ($1, $2, $3, $4, $5)",
+		log.Time, log.ServiceID, log.Level, log.Message, log.Metadata)
+	return err
+}
+
+// MetricPoint struct
+type MetricPoint struct {
+	Time       time.Time
+	ServiceID  string
+	MetricName string
+	Value      float64
+	Labels     []byte
+}
+
+// InsertMetric inserts a metric data point into the timeseries DB.
+func (db *DB) InsertMetric(ctx context.Context, metric MetricPoint) error {
+	_, err := db.Pool.Exec(ctx,
+		"INSERT INTO metric_points (time, service_id, metric_name, value, labels) VALUES ($1, $2, $3, $4, $5)",
+		metric.Time, metric.ServiceID, metric.MetricName, metric.Value, metric.Labels)
+	return err
+}
+
+// Anomaly struct
+type Anomaly struct {
+	ID               string
+	ServiceID        string
+	DetectedAt       time.Time
+	AnomalyType      string
+	Description      string
+	RootCauseSummary string
+	LikelyCause      string
+	SuggestedFix     string
+}
+
+// InsertAnomaly stores a detected anomaly and AI summary.
+func (db *DB) InsertAnomaly(ctx context.Context, anomaly Anomaly) error {
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO anomalies (service_id, detected_at, anomaly_type, description, root_cause_summary, likely_cause, suggested_fix) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		anomaly.ServiceID, anomaly.DetectedAt, anomaly.AnomalyType, anomaly.Description, anomaly.RootCauseSummary, anomaly.LikelyCause, anomaly.SuggestedFix)
+	return err
+}
+
+// GetRecentLogs retrieves recent logs for AI analysis.
+func (db *DB) GetRecentLogs(ctx context.Context, serviceID string, limit int) ([]LogEntry, error) {
+	rows, err := db.Pool.Query(ctx, 
+		"SELECT time, service_id, level, message, metadata FROM log_entries WHERE service_id = $1 ORDER BY time DESC LIMIT $2", 
+		serviceID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []LogEntry{}
+
+	var logs []LogEntry
 	for rows.Next() {
 		var l LogEntry
-		if err := rows.Scan(&l.Time, &l.TenantID, &l.ServiceID, &l.Level, &l.Message, &l.Metadata); err != nil {
+		if err := rows.Scan(&l.Time, &l.ServiceID, &l.Level, &l.Message, &l.Metadata); err != nil {
 			return nil, err
 		}
-		out = append(out, l)
+		logs = append(logs, l)
 	}
-	return out, nil
+	return logs, nil
 }
 
-func (db *DB) GetRecentAnomalies(ctx context.Context, tenantID string, limit int) ([]Anomaly, error) {
-	rows, err := db.Pool.Query(ctx, "SELECT a.id::text, s.tenant_id::text, a.service_id::text, a.detected_at, a.anomaly_type, a.description, a.root_cause_summary, a.likely_cause, a.suggested_fix FROM anomalies a JOIN services s ON s.id=a.service_id WHERE s.tenant_id=$1 ORDER BY a.detected_at DESC LIMIT $2", tenantID, limit)
+func (db *DB) GetRecentLogsForTenant(ctx context.Context, tenantID string, limit int) ([]LogEntry, error) {
+	rows, err := db.Pool.Query(ctx, 
+		`SELECT time, service_id, level, message, metadata 
+		FROM log_entries 
+		WHERE service_id IN (SELECT id FROM services WHERE tenant_id = $1) 
+		ORDER BY time DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Anomaly{}
+
+	var logs []LogEntry
 	for rows.Next() {
-		var a Anomaly
-		if err := rows.Scan(&a.ID, &a.TenantID, &a.ServiceID, &a.DetectedAt, &a.AnomalyType, &a.Description, &a.RootCauseSummary, &a.LikelyCause, &a.SuggestedFix); err != nil {
+		var l LogEntry
+		if err := rows.Scan(&l.Time, &l.ServiceID, &l.Level, &l.Message, &l.Metadata); err != nil {
 			return nil, err
 		}
-		out = append(out, a)
+		logs = append(logs, l)
 	}
-	return out, nil
+	return logs, nil
 }
 
-func (db *DB) GetRecentMetrics(ctx context.Context, tenantID, serviceID string, limit int) ([]MetricPoint, error) {
-	q := "SELECT m.time, s.tenant_id::text, m.service_id::text, m.metric_name, m.value, m.labels FROM metric_points m JOIN services s ON s.id=m.service_id WHERE s.tenant_id=$1"
-	args := []interface{}{tenantID}
-	if serviceID != "" {
-		q += " AND m.service_id=$2"
-		args = append(args, serviceID)
-	}
-	q += " ORDER BY m.time DESC"
-	if limit > 0 {
-		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
-		args = append(args, limit)
-	}
-	rows, err := db.Pool.Query(ctx, q, args...)
+func (db *DB) GetRecentMetricsForTenant(ctx context.Context, tenantID string, limit int) ([]MetricPoint, error) {
+	rows, err := db.Pool.Query(ctx, 
+		`SELECT time, service_id, metric_name, value, labels 
+		FROM metric_points 
+		WHERE service_id IN (SELECT id FROM services WHERE tenant_id = $1) 
+		ORDER BY time DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []MetricPoint{}
+
+	var metrics []MetricPoint
 	for rows.Next() {
 		var m MetricPoint
-		if err := rows.Scan(&m.Time, &m.TenantID, &m.ServiceID, &m.MetricName, &m.Value, &m.Labels); err != nil {
+		if err := rows.Scan(&m.Time, &m.ServiceID, &m.MetricName, &m.Value, &m.Labels); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		metrics = append(metrics, m)
 	}
-	return out, nil
+	return metrics, nil
 }
 
-func (db *DB) GetServices(ctx context.Context, tenantID string) ([]Service, error) {
-	rows, err := db.Pool.Query(ctx, "SELECT id::text, tenant_id::text, name, created_at FROM services WHERE tenant_id=$1 ORDER BY created_at DESC", tenantID)
+func (db *DB) GetRecentAnomaliesForTenant(ctx context.Context, tenantID string, limit int) ([]Anomaly, error) {
+	rows, err := db.Pool.Query(ctx, 
+		`SELECT id, service_id, detected_at, anomaly_type, description, root_cause_summary, likely_cause, suggested_fix 
+		FROM anomalies 
+		WHERE service_id IN (SELECT id FROM services WHERE tenant_id = $1) 
+		ORDER BY detected_at DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Service{}
+
+	var anomalies []Anomaly
 	for rows.Next() {
-		var s Service
-		if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.CreatedAt); err != nil {
+		var a Anomaly
+		if err := rows.Scan(&a.ID, &a.ServiceID, &a.DetectedAt, &a.AnomalyType, &a.Description, &a.RootCauseSummary, &a.LikelyCause, &a.SuggestedFix); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		anomalies = append(anomalies, a)
 	}
-	return out, nil
+	return anomalies, nil
 }

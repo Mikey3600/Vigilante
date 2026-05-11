@@ -2,82 +2,55 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"net/http"
+	"log"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
+	"github.com/spf13/cobra"
+	"github.com/user/vigilante/internal/ai"
 	"github.com/user/vigilante/internal/api"
-	igrpc "github.com/user/vigilante/internal/grpc"
+	"github.com/user/vigilante/internal/grpc"
 	"github.com/user/vigilante/internal/storage"
-	"golang.org/x/sync/errgroup"
 )
 
-func RunServe(ctx context.Context) error {
-	fmt.Println("Vigilante starting...")
-
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		return fmt.Errorf("DATABASE_URL is required")
-	}
-
-	db, err := storage.NewDB(ctx, databaseURL)
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-	defer db.Close()
-	fmt.Println("Connected to database")
-
-	if err := db.RunMigrations(ctx); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
-	}
-	fmt.Println("Migrations complete")
-
-	r := api.SetupRouter(db)
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	httpAddr := ":" + port
-	grpcPort := getenv("GRPC_PORT", "50051")
-
-	httpSrv := &http.Server{Addr: httpAddr, Handler: r}
-
-	serveCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	g, gctx := errgroup.WithContext(serveCtx)
-
-	g.Go(func() error {
-		return igrpc.Start(gctx, grpcPort, db)
-	})
-
-	g.Go(func() error {
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			return err
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Starts the Vigilante HTTP and gRPC servers",
+	Run: func(cmd *cobra.Command, args *string) {
+		dbUrl := os.Getenv("DATABASE_URL")
+		db, err := storage.NewDB(context.Background(), dbUrl)
+		if err != nil {
+			log.Fatalf("Failed to init db: %v", err)
 		}
-		return nil
-	})
 
-	g.Go(func() error {
-		<-gctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		return httpSrv.Shutdown(shutdownCtx)
-	})
+		aiClient, err := ai.NewClient(context.Background())
+		if err != nil {
+			log.Printf("Warning: Failed to init AI client: %v", err)
+		}
 
-	fmt.Printf("HTTP server listening on %s\n", httpAddr)
-	fmt.Printf("gRPC server listening on :%s\n", grpcPort)
-	fmt.Println("Vigilante is ready")
+		go func() {
+			grpcPort := os.Getenv("GRPC_PORT")
+			if grpcPort == "" {
+				grpcPort = "50051"
+			}
+			log.Printf("Starting gRPC on :%s", grpcPort)
+			if err := grpc.Start(grpcPort, db); err != nil {
+				log.Fatalf("gRPC server failed: %v", err)
+			}
+		}()
 
-	return g.Wait()
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "3000"
+		}
+		
+		r := api.SetupRouter(db, aiClient)
+		log.Printf("Starting HTTP on :%s", port)
+		if err := r.Run(":" + port); err != nil {
+			log.Fatalf("HTTP server failed: %v", err)
+		}
+	},
 }
 
-func getenv(k, d string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return d
+func init() {
+	rootCmd.AddCommand(serveCmd)
 }

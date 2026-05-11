@@ -2,31 +2,31 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/user/vigilante/internal/storage"
 )
 
-func RunMigrate(ctx context.Context) error {
-	fmt.Println("Vigilante starting...")
+var migrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Runs database schema migrations",
+	Run: func(cmd *cobra.Command, args *string) {
+		dbUrl := os.Getenv("DATABASE_URL")
+		db, err := storage.NewDB(context.Background(), dbUrl)
+		if err != nil {
+			log.Fatalf("Failed to init db: %v", err)
+		}
+		defer db.Close()
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		return fmt.Errorf("DATABASE_URL is required")
-	}
+		if err := db.RunMigrations(context.Background()); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+		log.Println("Migrations applied successfully!")
+	},
+}
 
-	db, err := storage.NewDB(ctx, databaseURL)
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-	defer db.Close()
-	fmt.Println("Connected to database")
-
-	if err := db.RunMigrations(ctx); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
-	}
-	fmt.Println("Migrations complete")
-
-	return nil
+func init() {
+	rootCmd.AddCommand(migrateCmd)
 }

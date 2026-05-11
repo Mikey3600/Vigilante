@@ -5,20 +5,69 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/user/vigilante/internal/storage"
 	"google.golang.org/api/option"
 )
 
-type Client struct{ cli *genai.Client }
-type RootCauseReport struct { Summary string `json:"summary"`; LikelyCause string `json:"likely_cause"`; SuggestedFix string `json:"suggested_fix"` }
+// Client wraps the Gemini API interface.
+type Client struct {
+	cli *genai.Client
+}
 
-func NewClient(ctx context.Context) (*Client,error){ k:=os.Getenv("GEMINI_API_KEY"); if k==""{ return nil, fmt.Errorf("GEMINI_API_KEY is not set")}; c,err:=genai.NewClient(ctx, option.WithAPIKey(k)); if err!=nil{return nil,err}; return &Client{cli:c},nil }
+// NewClient initializes the Gemini client mapping it to the provided API key.
+func NewClient(ctx context.Context) (*Client, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
+	}
 
+	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	if err != nil {
+		return nil, fmt.Errorf("failed to init genai client: %w", err)
+	}
+
+	return &Client{cli: client}, nil
+}
+
+// RootCauseReport maps the desired JSON format from Gemini.
+type RootCauseReport struct {
+	Summary      string `json:"summary"`
+	LikelyCause  string `json:"likely_cause"`
+	SuggestedFix string `json:"suggested_fix"`
+}
+
+// AnalyzeLogs asks Gemini 1.5 Flash to determine the root cause of an anomaly based on recent logs.
 func (c *Client) AnalyzeLogs(ctx context.Context, logs []storage.LogEntry, anomalyMeta string) (*RootCauseReport, error) {
-	var last error
-	for i:=0;i<3;i++ { reqCtx,cancel:=context.WithTimeout(ctx,30*time.Second); model:=c.cli.GenerativeModel("gemini-1.5-flash"); model.ResponseMIMEType="application/json"; resp,err:=model.GenerateContent(reqCtx, genai.Text(fmt.Sprintf("Anomaly: %s Logs: %+v",anomalyMeta,logs))); cancel(); if err!=nil{ last=err; time.Sleep(time.Duration(1<<i)*time.Second); continue }; if len(resp.Candidates)==0 { last=fmt.Errorf("no candidates"); continue }; txt,ok:=resp.Candidates[0].Content.Parts[0].(genai.Text); if !ok { last=fmt.Errorf("unexpected response"); continue }; var r RootCauseReport; if err:=json.Unmarshal([]byte(txt),&r); err!=nil{ last=err; continue }; return &r,nil }
-	return &RootCauseReport{Summary:"AI analysis unavailable",LikelyCause:"unknown",SuggestedFix:"investigate logs manually"}, last
+	model := c.cli.GenerativeModel("gemini-1.5-flash")
+	model.ResponseMIMEType = "application/json"
+
+	prompt := fmt.Sprintf(`You are a site reliability engineer diagnosing an issue.
+Anomaly: %s
+Logs Context:
+%v
+Generate a JSON object with 'summary', 'likely_cause', and 'suggested_fix'.
+`, anomalyMeta, logs)
+
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(resp.Candidates) == 0 {
+		return nil, fmt.Errorf("no response candidates generated")
+	}
+
+	var report RootCauseReport
+	part := resp.Candidates[0].Content.Parts[0]
+	
+	switch p := part.(type) {
+	case genai.Text:
+		if err := json.Unmarshal([]byte(p), &report); err != nil {
+			return nil, err
+		}
+	}
+
+	return &report, nil
 }

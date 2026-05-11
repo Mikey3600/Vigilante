@@ -69,14 +69,9 @@
     </main>
 
     <script>
-        const API_BASE = 'http://localhost:8080';
-        const SERVICE_ID = 'default';
-
         // Authentication state
-        let jwtToken = localStorage.getItem('jwtToken') || '';
-        let metricsIntervalId = null;
-        let logsIntervalId = null;
-        let anomaliesIntervalId = null;
+        let jwtToken = '';
+        let pollInterval = null;
 
         // DOM Elements
         const loginModal = document.getElementById('login-modal');
@@ -110,192 +105,136 @@
                     y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }
                 },
                 plugins: {
-                    legend: { labels: { color: '#9ca3af' } }
-                }
+                    legend: { labels: { color: '#9ca3af' } },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                animation: false // prevent lag on constant redraws
             }
         });
 
-        function setAuthenticatedUI() {
-            loginModal.style.display = 'none';
-            authStatus.textContent = 'Authenticated :: Live';
-            authStatus.classList.remove('text-gray-400');
-            authStatus.classList.add('text-green-400');
+        // Handle Login
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            jwtToken = tokenInput.value.trim();
+            if (jwtToken) {
+                loginModal.style.display = 'none';
+                startDashboardPolling();
+            }
+        });
+
+        function handleOffline() {
+            authStatus.textContent = "Disconnected - Retrying...";
+            authStatus.className = 'text-sm font-mono text-red-500';
+            if (clearInterval) clearInterval(pollInterval);
+            setTimeout(startDashboardPolling, 5000);
         }
 
-        function setUnauthenticatedUI(message = 'Not Authenticated') {
-            authStatus.textContent = message;
-            authStatus.classList.remove('text-green-400');
-            authStatus.classList.add('text-gray-400');
-            loginModal.style.display = 'flex';
-        }
+        async function fetchDashboardData() {
+            try {
+                const res = await fetch('/api/v1/dashboard', {
+                    headers: {
+                        'Authorization': `Bearer ${jwtToken}`
+                    }
+                });
 
-        function handleSessionExpired() {
-            jwtToken = '';
-            localStorage.removeItem('jwtToken');
-            stopPolling();
-            setUnauthenticatedUI('Session expired');
-        }
-
-        async function authorizedFetch(path) {
-            const response = await fetch(`${API_BASE}${path}`, {
-                headers: {
-                    Authorization: `Bearer ${jwtToken}`
+                if (!res.ok) {
+                    if (res.status === 401) {
+                        alert("Invalid Token");
+                        window.location.reload();
+                        return;
+                    }
+                    throw new Error("Backend error");
                 }
+
+                const data = await res.json();
+                authStatus.textContent = "Authenticated :: Live";
+                authStatus.className = 'text-sm font-mono text-green-400';
+                
+                renderMetrics(data.metrics);
+                renderLogs(data.logs);
+                renderAnomalies(data.anomalies);
+                
+            } catch (err) {
+                handleOffline();
+            }
+        }
+
+        function startDashboardPolling() {
+            authStatus.textContent = "Authenticated :: Connecting...";
+            authStatus.className = 'text-sm font-mono text-yellow-400';
+            logStream.innerHTML = ''; // clear wait text
+            fetchDashboardData();
+            pollInterval = setInterval(fetchDashboardData, 5000);
+        }
+
+        function renderMetrics(metrics) {
+            if (!metrics || metrics.length === 0) return;
+            
+            // Sort by time ascending
+            const sorted = metrics.sort((a, b) => new Date(a.Time) - new Date(b.Time));
+            
+            const labels = [];
+            const values = [];
+            
+            sorted.forEach(m => {
+                labels.push(new Date(m.Time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}));
+                values.push(m.Value);
             });
 
-            if (response.status === 401) {
-                handleSessionExpired();
-                return null;
-            }
-
-            if (!response.ok) {
-                throw new Error(`Request failed (${response.status}) for ${path}`);
-            }
-
-            return response.json();
-        }
-
-        function asArray(payload) {
-            if (Array.isArray(payload)) return payload;
-            if (payload && Array.isArray(payload.data)) return payload.data;
-            if (payload && Array.isArray(payload.items)) return payload.items;
-            return [];
-        }
-
-        function renderNoData(container, text = 'No data yet') {
-            container.innerHTML = `<div class="text-gray-500 text-sm italic text-center mt-2">${text}</div>`;
-        }
-
-        function renderError(container, text) {
-            container.innerHTML = `<div class="text-red-400 text-sm italic text-center mt-2">${text}</div>`;
-        }
-
-        function updateMetrics(metrics) {
-            if (metrics.length === 0) {
-                metricsChart.data.labels = ['No data yet'];
-                metricsChart.data.datasets[0].data = [0];
-                metricsChart.update();
-                return;
-            }
-            const ordered = [...metrics].reverse();
-            metricsChart.data.labels = ordered.map((entry, idx) => {
-                const ts = entry.timestamp || entry.ts || entry.time || entry.created_at;
-                return ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : `#${idx + 1}`;
-            });
-            metricsChart.data.datasets[0].data = ordered.map((entry) => {
-                const value = Number(entry.latency_ms ?? entry.latency ?? entry.value ?? entry.metric_value ?? 0);
-                return Number.isFinite(value) ? value : 0;
-            });
+            metricsChart.data.labels = labels;
+            metricsChart.data.datasets[0].data = values;
             metricsChart.update();
         }
 
-        function updateLogs(logs) {
-            if (logs.length === 0) {
-                renderNoData(logStream);
+        function renderLogs(logs) {
+            if (!logs || logs.length === 0) {
+                if(logStream.children.length === 0) logStream.innerHTML = '<div class="text-gray-500">Wait for logs...</div>';
                 return;
             }
+            
             logStream.innerHTML = '';
-            logs.slice().reverse().forEach((log) => {
+            
+            // Since we grabbed DESC from backend, reverse to print sequentially
+            const sorted = logs.sort((a, b) => new Date(a.Time) - new Date(b.Time));
+
+            sorted.forEach(r => {
                 const el = document.createElement('div');
-                const rawTs = log.timestamp || log.ts || log.time || log.created_at;
-                const time = rawTs ? new Date(rawTs).toISOString().split('T')[1].replace('Z', '') : 'unknown';
-                const level = String(log.level || 'INFO').toUpperCase();
-                const msg = log.message || log.msg || JSON.stringify(log);
-
+                const timeStr = new Date(r.Time).toISOString().split('T')[1].slice(0, -1);
+                
                 let color = 'text-gray-300';
-                if (level === 'ERROR') color = 'text-red-400';
-                if (level === 'WARN' || level === 'WARNING') color = 'text-yellow-400';
-
-                el.innerHTML = `<span class="text-gray-500">[${time}]</span> <span class="font-bold ${color}">${level}</span> ${msg}`;
+                if (r.Level === 'ERROR') color = 'text-red-400';
+                if (r.Level === 'WARN') color = 'text-yellow-400';
+                
+                el.innerHTML = `<span class="text-gray-500">[${timeStr}]</span> <span class="font-bold ${color}">${r.Level}</span> ${r.Message}`;
                 logStream.appendChild(el);
             });
             logStream.scrollTop = logStream.scrollHeight;
         }
 
-        function updateAnomalies(anomalies) {
-            if (anomalies.length === 0) {
-                renderNoData(anomalyFeed);
+        function renderAnomalies(anomalies) {
+            if (!anomalies || anomalies.length === 0) {
+                anomalyFeed.innerHTML = '<p class="text-gray-500 text-sm italic text-center mt-10">No recent anomalies detected.</p>';
                 return;
             }
-            anomalyFeed.innerHTML = '';
-            anomalies.forEach((data) => {
-                const el = document.createElement('div');
-                el.className = 'bg-gray-900 rounded p-4 border-l-4 border-red-500 flex flex-col gap-2 relative shadow-md animate-fade-in-up';
-                const ts = data.timestamp || data.ts || data.time || data.created_at;
-                const title = data.title || data.name || data.anomaly_type || 'Detected anomaly';
-                const summary = data.summary || data.description || data.root_cause_summary || 'No summary provided.';
-                const likelyCause = data.likelyCause || data.cause || data.likely_cause || 'Unknown';
-                const fix = data.fix || data.remediation || data.suggested_fix || 'No remediation provided.';
 
+            anomalyFeed.innerHTML = '';
+
+            anomalies.forEach(data => {
+                const el = document.createElement('div');
+                el.className = 'bg-gray-900 rounded p-4 border-l-4 border-red-500 flex flex-col gap-2 relative shadow-md';
                 el.innerHTML = `
                     <div class="flex justify-between items-start">
-                        <span class="font-semibold text-red-400 text-sm">${title}</span>
-                        <span class="text-xs text-gray-500">${ts ? new Date(ts).toLocaleTimeString() : ''}</span>
+                        <span class="font-semibold text-red-400 text-sm">${data.AnomalyType || 'Unknown Issue'}</span>
+                        <span class="text-xs text-gray-500">${new Date(data.DetectedAt).toLocaleTimeString()}</span>
                     </div>
-                    <div class="text-sm text-gray-300 mt-1"><span class="font-medium text-gray-400">AI Summary:</span> ${summary}</div>
-                    <div class="text-sm text-gray-300"><span class="font-medium text-gray-400">Cause:</span> ${likelyCause}</div>
-                    <div class="text-sm text-green-400 mt-2 p-2 bg-gray-800 rounded border border-green-900"><span class="font-bold">Fix:</span> ${fix}</div>
+                    <div class="text-sm text-gray-300 mt-1"><span class="font-medium text-gray-400">AI Summary:</span> ${data.RootCauseSummary || 'Generating analysis...'}</div>
+                    <div class="text-sm text-gray-300"><span class="font-medium text-gray-400">Cause:</span> ${data.LikelyCause || 'Pending root cause determination...'}</div>
+                    <div class="text-sm text-green-400 mt-2 p-2 bg-gray-800 rounded border border-green-900"><span class="font-bold">Fix:</span> ${data.SuggestedFix || 'Awaiting remediation suggestion...'}</div>
                 `;
                 anomalyFeed.appendChild(el);
             });
         }
-
-        async function fetchDashboard() {
-            const payload = await authorizedFetch(`/api/v1/dashboard?service_id=${SERVICE_ID}`);
-            if (!payload) return;
-            updateMetrics(asArray(payload.metrics));
-            updateLogs(asArray(payload.logs));
-            updateAnomalies(asArray(payload.anomalies));
-        }
-
-        function stopPolling() {
-            [metricsIntervalId, logsIntervalId, anomaliesIntervalId].forEach((id) => {
-                if (id) clearInterval(id);
-            });
-            metricsIntervalId = null;
-            logsIntervalId = null;
-            anomaliesIntervalId = null;
-        }
-
-        function handlePollingError(err) {
-            stopPolling();
-            authStatus.textContent = 'Backend offline';
-            authStatus.classList.remove('text-green-400');
-            authStatus.classList.add('text-red-400');
-            metricsChart.data.labels = ['Connection lost'];
-            metricsChart.data.datasets[0].data = [0];
-            metricsChart.update();
-            renderError(logStream, 'Backend unavailable. Polling stopped.');
-            renderError(anomalyFeed, 'Backend unavailable. Polling stopped.');
-            console.error(err);
-        }
-
-        function startPolling() {
-            stopPolling();
-            fetchDashboard().catch(handlePollingError);
-            metricsIntervalId = setInterval(() => fetchDashboard().catch(handlePollingError), 3000);
-        }
-
-        // Handle Login
-        loginForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const token = tokenInput.value.trim();
-            if (!token) return;
-
-            jwtToken = token;
-            localStorage.setItem('jwtToken', jwtToken);
-            tokenInput.value = '';
-            setAuthenticatedUI();
-            startPolling();
-        });
-
-        // Auto-connect when token exists in localStorage
-        if (jwtToken) {
-            setAuthenticatedUI();
-            startPolling();
-        }
     </script>
-
     <style>
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; }
@@ -308,3 +247,4 @@
     </style>
 </body>
 </html>
+

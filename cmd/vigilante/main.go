@@ -1,42 +1,26 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"os"
-
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
+	"log"
+	"os"
 )
 
-var rootCmd = &cobra.Command{Use: "vigilante", Short: "Vigilante observability platform"}
-
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start HTTP and gRPC servers",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return RunServe(context.Background())
-	},
-}
-
-var migrateCmd = &cobra.Command{
-	Use:   "migrate",
-	Short: "Runs database schema migrations",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return RunMigrate(context.Background())
-	},
+var rootCmd = &cobra.Command{
+	Use:   "vigilante",
+	Short: "Vigilante is a Backend Observability & Incident Intelligence Platform",
+	Long:  `Vigilante ingests logs and metrics securely, stores them in TimescaleDB, detects anomalies, and uses Gemini AI to give root calls via Webhook logic bounds.`,
 }
 
 func init() {
 	_ = godotenv.Load()
-	rootCmd.AddCommand(serveCmd)
-	rootCmd.AddCommand(migrateCmd)
-	rootCmd.AddCommand(tokenCmd)
 }
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Println(err)
 		os.Exit(1)
 	}
 }

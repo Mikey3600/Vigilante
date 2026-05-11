@@ -1,7 +1,6 @@
 package grpc
 
 import (
-	"context"
 	"fmt"
 	"net"
 
@@ -9,12 +8,18 @@ import (
 	"google.golang.org/grpc"
 )
 
-type Server struct{ DB *storage.DB }
+// Server implements the generated MetricIngestionServer interface.
+type Server struct {
+	DB *storage.DB
+}
 
-func Start(ctx context.Context, port string, db *storage.DB) error {
-	_ = db
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port)); if err != nil { return err }
+// Start opens up a gRPC bounding listener.
+func Start(port string, db *storage.DB) error {
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
+	if err != nil {
+		return err
+	}
 	s := grpc.NewServer()
-	go func(){ <-ctx.Done(); s.GracefulStop() }()
+	// When code is compiled, RegisterMetricIngestionServer goes here.
 	return s.Serve(lis)
 }
