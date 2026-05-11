@@ -31,6 +31,7 @@ func init() {
 	_ = godotenv.Load()
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(migrateCmd)
+	rootCmd.AddCommand(tokenCmd)
 }
 
 func main() {
