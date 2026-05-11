@@ -36,6 +36,15 @@ func SetupRouter(db *storage.DB) *gin.Engine {
 		}
 		c.JSON(200, logs)
 	})
+	v1.GET("/metrics", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		metrics, err := db.GetRecentMetrics(c, auth.GetTenantID(c), c.Query("service_id"), limit)
+		if err != nil {
+			jsonErr(c, 500, "DB_ERROR", err.Error())
+			return
+		}
+		c.JSON(200, metrics)
+	})
 	v1.GET("/anomalies", func(c *gin.Context) {
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "5"))
 		anomalies, err := db.GetRecentAnomalies(c, auth.GetTenantID(c), limit)
@@ -52,6 +61,40 @@ func SetupRouter(db *storage.DB) *gin.Engine {
 			return
 		}
 		c.JSON(200, services)
+	})
+	v1.GET("/dashboard", func(c *gin.Context) {
+		tenantID := auth.GetTenantID(c)
+		serviceID := c.Query("service_id")
+
+		metrics, err := db.GetRecentMetrics(c, tenantID, serviceID, 20)
+		if err != nil {
+			jsonErr(c, 500, "DB_ERROR", err.Error())
+			return
+		}
+		logs, err := db.GetRecentLogs(c, tenantID, serviceID, 50)
+		if err != nil {
+			jsonErr(c, 500, "DB_ERROR", err.Error())
+			return
+		}
+		anomalies, err := db.GetRecentAnomalies(c, tenantID, 5)
+		if err != nil {
+			jsonErr(c, 500, "DB_ERROR", err.Error())
+			return
+		}
+
+		snapshot := storage.DashboardSnapshot{Metrics: metrics, Logs: logs, Anomalies: anomalies}
+		for _, point := range metrics {
+			switch point.MetricName {
+			case "http.latency", "latency", "latency_ms":
+				snapshot.Latency = point.Value
+			case "cpu", "cpu.usage", "system.cpu":
+				snapshot.CPU = point.Value
+			case "memory", "memory.usage", "system.memory":
+				snapshot.Memory = point.Value
+			}
+		}
+
+		c.JSON(200, snapshot)
 	})
 	v1.POST("/logs", func(c *gin.Context) {
 		var p ingestion.BatchLogPayload
