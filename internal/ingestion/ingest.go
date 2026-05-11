@@ -3,71 +3,100 @@ package ingestion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/user/vigilante/internal/storage"
 )
 
-// BatchLogPayload maps the incoming bulk log struct.
 type BatchLogPayload struct {
-	ServiceID string `json:"service_id"`
-	Logs      []struct {
+	ServiceID string `json:"service_id" binding:"required"`
+	Logs []struct {
 		Time     string          `json:"time"`
-		Level    string          `json:"level"`
-		Message  string          `json:"message"`
+		Level    string          `json:"level" binding:"required"`
+		Message  string          `json:"message" binding:"required"`
 		Metadata json.RawMessage `json:"metadata"`
-	} `json:"logs"`
+	} `json:"logs" binding:"required,min=1"`
 }
 
-// ProcessLogs validates and inserts batch logs.
-func ProcessLogs(ctx context.Context, db *storage.DB, payload BatchLogPayload) error {
+type BatchMetricPayload struct {
+	ServiceID string `json:"service_id" binding:"required"`
+	Metrics []struct {
+		Time       string          `json:"time"`
+		MetricName string          `json:"metric_name" binding:"required"`
+		Value      float64         `json:"value"`
+		Labels     json.RawMessage `json:"labels"`
+	} `json:"metrics" binding:"required,min=1"`
+}
+
+func ProcessLogs(ctx context.Context, db *storage.DB, tenantID string, payload BatchLogPayload) error {
+	if payload.ServiceID == "" {
+		return errors.New("service_id required")
+	}
+
 	for _, l := range payload.Logs {
-		t, err := time.Parse(time.RFC3339, l.Time)
-		if err != nil {
+		var t time.Time
+
+		if l.Time == "" {
 			t = time.Now()
+		} else {
+			var err error
+
+			t, err = time.Parse(time.RFC3339, l.Time)
+			if err != nil {
+				return err
+			}
 		}
-		entry := storage.LogEntry{
+
+		err := db.InsertLog(ctx, storage.LogEntry{
 			Time:      t,
+			TenantID:  tenantID,
 			ServiceID: payload.ServiceID,
 			Level:     l.Level,
 			Message:   l.Message,
 			Metadata:  l.Metadata,
-		}
-		if err := db.InsertLog(ctx, entry); err != nil {
+		})
+
+		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
-// BatchMetricPayload maps bulk metrics.
-type BatchMetricPayload struct {
-	ServiceID string `json:"service_id"`
-	Metrics   []struct {
-		Time       string          `json:"time"`
-		MetricName string          `json:"metric_name"`
-		Value      float64         `json:"value"`
-		Labels     json.RawMessage `json:"labels"`
-	} `json:"metrics"`
-}
+func ProcessMetrics(ctx context.Context, db *storage.DB, tenantID string, payload BatchMetricPayload) error {
+	if payload.ServiceID == "" {
+		return errors.New("service_id required")
+	}
 
-// ProcessMetrics handles processing block metrics points.
-func ProcessMetrics(ctx context.Context, db *storage.DB, payload BatchMetricPayload) error {
 	for _, m := range payload.Metrics {
-		t, err := time.Parse(time.RFC3339, m.Time)
-		if err != nil {
+		var t time.Time
+
+		if m.Time == "" {
 			t = time.Now()
+		} else {
+			var err error
+
+			t, err = time.Parse(time.RFC3339, m.Time)
+			if err != nil {
+				return err
+			}
 		}
-		pt := storage.MetricPoint{
+
+		err := db.InsertMetric(ctx, storage.MetricPoint{
 			Time:       t,
+			TenantID:   tenantID,
 			ServiceID:  payload.ServiceID,
 			MetricName: m.MetricName,
 			Value:      m.Value,
 			Labels:     m.Labels,
-		}
-		if err := db.InsertMetric(ctx, pt); err != nil {
+		})
+
+		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
