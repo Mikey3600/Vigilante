@@ -2,18 +2,31 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/user/vigilante/internal/storage"
 )
 
-var migrateCmd = &cobra.Command{Use: "migrate", Short: "Runs database schema migrations", RunE: func(cmd *cobra.Command, args []string) error {
-	db, err := storage.NewDB(context.Background(), os.Getenv("DATABASE_URL")); if err != nil { return err }
-	defer db.Close(); if err := db.RunMigrations(context.Background()); err != nil { return err }
-	slog.Info("migrations_applied")
-	return nil
-}}
+func RunMigrate(ctx context.Context) error {
+	fmt.Println("Vigilante starting...")
 
-func init() { rootCmd.AddCommand(migrateCmd) }
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
+
+	db, err := storage.NewDB(ctx, databaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+	fmt.Println("Connected to database")
+
+	if err := db.RunMigrations(ctx); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+	fmt.Println("Migrations complete")
+
+	return nil
+}
