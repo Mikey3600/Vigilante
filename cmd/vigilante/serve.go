@@ -3,62 +3,72 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/user/vigilante/internal/api"
 	igrpc "github.com/user/vigilante/internal/grpc"
 	"github.com/user/vigilante/internal/storage"
 	"golang.org/x/sync/errgroup"
 )
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start HTTP and gRPC servers",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer stop()
+func RunServe(ctx context.Context) error {
+	fmt.Println("Vigilante starting...")
 
-		db, err := storage.NewDB(ctx, os.Getenv("DATABASE_URL"))
-		if err != nil {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
+
+	db, err := storage.NewDB(ctx, databaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+	fmt.Println("Connected to database")
+
+	if err := db.RunMigrations(ctx); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+	fmt.Println("Migrations complete")
+
+	r := api.SetupRouter(db)
+	httpAddr := ":" + getenv("HTTP_PORT", "8080")
+	grpcPort := getenv("GRPC_PORT", "50051")
+
+	httpSrv := &http.Server{Addr: httpAddr, Handler: r}
+
+	serveCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	g, gctx := errgroup.WithContext(serveCtx)
+
+	g.Go(func() error {
+		return igrpc.Start(gctx, grpcPort, db)
+	})
+
+	g.Go(func() error {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			return err
 		}
-		defer db.Close()
+		return nil
+	})
 
-		r := api.SetupRouter(db)
-		httpSrv := &http.Server{
-			Addr:    ":" + getenv("HTTP_PORT", "8080"),
-			Handler: r,
-		}
+	g.Go(func() error {
+		<-gctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return httpSrv.Shutdown(shutdownCtx)
+	})
 
-		g, gctx := errgroup.WithContext(ctx)
+	fmt.Printf("HTTP server listening on %s\n", httpAddr)
+	fmt.Printf("gRPC server listening on :%s\n", grpcPort)
+	fmt.Println("Vigilante is ready")
 
-		g.Go(func() error {
-			return igrpc.Start(gctx, getenv("GRPC_PORT", "50051"), db)
-		})
-
-		g.Go(func() error {
-			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				return err
-			}
-			return nil
-		})
-
-		g.Go(func() error {
-			<-gctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			return httpSrv.Shutdown(shutdownCtx)
-		})
-
-		slog.Info("servers_started", "http", httpSrv.Addr)
-		return g.Wait()
-	},
+	return g.Wait()
 }
 
 func getenv(k, d string) string {
@@ -66,9 +76,4 @@ func getenv(k, d string) string {
 		return v
 	}
 	return d
-}
-
-func init() {
-	rootCmd.AddCommand(serveCmd)
-	_ = fmt.Sprintf
 }
