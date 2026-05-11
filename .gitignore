@@ -6,3 +6,5 @@ coverage/
 *.log
 .env*
 !.env.example
+# Ignore compiled Windows binaries
+*.exe
