@@ -29,6 +29,10 @@ type Anomaly struct {
 	ID, TenantID, ServiceID, AnomalyType, Description, RootCauseSummary, LikelyCause, SuggestedFix, Severity string
 	DetectedAt                                                                                               time.Time
 }
+type Service struct {
+	ID, TenantID, Name string
+	CreatedAt          time.Time
+}
 
 func NewDB(ctx context.Context, connString string) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(connString)
@@ -62,7 +66,18 @@ func (db *DB) InsertMetric(ctx context.Context, m MetricPoint) error {
 	return err
 }
 func (db *DB) GetRecentLogs(ctx context.Context, tenantID, serviceID string, limit int) ([]LogEntry, error) {
-	rows, err := db.Pool.Query(ctx, "SELECT time, tenant_id, service_id, level, message, metadata FROM log_entries WHERE tenant_id=$1 AND service_id=$2 ORDER BY time DESC LIMIT $3", tenantID, serviceID, limit)
+	q := "SELECT l.time, s.tenant_id::text, l.service_id::text, l.level, l.message, l.metadata FROM log_entries l JOIN services s ON s.id=l.service_id WHERE s.tenant_id=$1"
+	args := []interface{}{tenantID}
+	if serviceID != "" {
+		q += " AND l.service_id=$2"
+		args = append(args, serviceID)
+	}
+	q += " ORDER BY l.time DESC"
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := db.Pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +89,40 @@ func (db *DB) GetRecentLogs(ctx context.Context, tenantID, serviceID string, lim
 			return nil, err
 		}
 		out = append(out, l)
+	}
+	return out, nil
+}
+
+func (db *DB) GetRecentAnomalies(ctx context.Context, tenantID string, limit int) ([]Anomaly, error) {
+	rows, err := db.Pool.Query(ctx, "SELECT a.id::text, s.tenant_id::text, a.service_id::text, a.detected_at, a.anomaly_type, a.description, a.root_cause_summary, a.likely_cause, a.suggested_fix FROM anomalies a JOIN services s ON s.id=a.service_id WHERE s.tenant_id=$1 ORDER BY a.detected_at DESC LIMIT $2", tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Anomaly{}
+	for rows.Next() {
+		var a Anomaly
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.ServiceID, &a.DetectedAt, &a.AnomalyType, &a.Description, &a.RootCauseSummary, &a.LikelyCause, &a.SuggestedFix); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+func (db *DB) GetServices(ctx context.Context, tenantID string) ([]Service, error) {
+	rows, err := db.Pool.Query(ctx, "SELECT id::text, tenant_id::text, name, created_at FROM services WHERE tenant_id=$1 ORDER BY created_at DESC", tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Service{}
+	for rows.Next() {
+		var s Service
+		if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
 	}
 	return out, nil
 }
