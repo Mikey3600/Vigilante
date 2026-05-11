@@ -36,7 +36,11 @@ func RunServe(ctx context.Context) error {
 	fmt.Println("Migrations complete")
 
 	r := api.SetupRouter(db)
-	httpAddr := ":" + getenv("HTTP_PORT", "8080")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	httpAddr := ":" + port
 	grpcPort := getenv("GRPC_PORT", "50051")
 
 	httpSrv := &http.Server{Addr: httpAddr, Handler: r}
