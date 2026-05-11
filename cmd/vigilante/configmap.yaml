@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vigilante-config
+data:
+  PORT: "3000"
+  GRPC_PORT: "50051"

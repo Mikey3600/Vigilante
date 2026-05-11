@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vigilante
+  labels:
+    app: vigilante
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vigilante
+  template:
+    metadata:
+      labels:
+        app: vigilante
+    spec:
+      containers:
+      - name: vigilante
+        image: vigilante:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+          name: http
+        - containerPort: 50051
+          name: grpc
+        envFrom:
+        - configMapRef:
+            name: vigilante-config
+        - secretRef:
+            name: vigilante-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

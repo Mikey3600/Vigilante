@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package ingestion;
+
+option go_package = "github.com/user/vigilante/internal/grpc";
+
+message MetricPoint {
+    string time = 1;
+    string metric_name = 2;
+    double value = 3;
+    string labels = 4;
+}
+
+message IngestMetricsRequest {
+    string service_id = 1;
+    repeated MetricPoint metrics = 2;
+}
+
+message IngestMetricsResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+service MetricIngestion {
+    rpc IngestMetrics(IngestMetricsRequest) returns (IngestMetricsResponse) {}
+}

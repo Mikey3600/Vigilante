@@ -1,11 +1,81 @@
-<div align="center">
+# Vigilante
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Vigilante is a self-hostable Backend Observability & Incident Intelligence Platform written entirely in Go.
 
-  <h1>Built with AI Studio</h2>
+It ingests logs and metrics from multiple microservices via REST and gRPC, stores the time-series data efficiently via TimescaleDB, detects anomalies, and automatically queries the Gemini AI API for root-cause analysis.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Architecture
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+```mermaid
+graph LR
+    subgraph Client Services
+        A[Microservice 1]
+        B[Microservice 2]
+    end
+    
+    subgraph Vigilante Platform
+        C[HTTP Ingestion POST /api/v1/logs]
+        D[gRPC Ingestion MetricIngestion]
+        E(TimescaleDB / Postgres)
+        F[Anomaly Engine]
+        G[AI Root-Cause Analyzer]
+        H[Alert Router]
+    end
+    
+    subgraph External Platforms
+        I[Slack]
+        J[Email]
+        K[Gemini API 1.5 Flash]
+        L[Dashboard WebSockets]
+    end
 
-</div>
+    A --> C
+    A --> D
+    B --> C
+    B --> D
+    
+    C --> E
+    D --> E
+    
+    F <--> E
+    F --> G
+    G <--> K
+    G --> H
+    H --> I
+    H --> J
+    H --> L
+```
+
+## Quick Start
+
+1. Start dependencies (Postgres + TimescaleDB):
+   ```bash
+   docker-compose up -d postgres
+   ```
+2. Set Environment Variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your Gemini API Key
+   ```
+3. Run Migrations:
+   ```bash
+   make migrate
+   ```
+4. Start Server:
+   ```bash
+   make run
+   ```
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | Postgres connection string |
+| `JWT_SECRET` | Secret key for JWT auth token generation |
+| `GEMINI_API_KEY` | Google AI API Key for anomaly analysis |
+| `PORT` | HTTP Server Port (default 3000) |
+| `GRPC_PORT` | gRPC Server Port (default 50051) |
+
+## Screenshots
+
+*Screenshots goes here once deployed!*

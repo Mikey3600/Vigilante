@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vigilante Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans antialiased min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-gray-800 border-b border-gray-700 py-4 px-6 flex justify-between items-center">
+        <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">
+            Vigilante
+        </h1>
+        <div id="auth-status" class="text-sm font-mono text-gray-400">
+            Not Authenticated
+        </div>
+    </header>
+
+    <!-- Login Form -->
+    <div id="login-modal" class="fixed inset-0 bg-gray-900 bg-opacity-90 flex items-center justify-center z-50 transition-opacity duration-300">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-2xl border border-gray-700 w-full max-w-md">
+            <h2 class="text-xl font-semibold mb-6 text-center">Tenant Access</h2>
+            <form id="login-form">
+                <div class="mb-4">
+                    <label class="block text-gray-400 text-sm mb-2" for="token">JWT Bearer Token</label>
+                    <input class="w-full bg-gray-900 border border-gray-600 rounded py-2 px-3 text-gray-200 focus:outline-none focus:border-blue-500 font-mono" id="token" type="password" required>
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 px-4 rounded transition-colors">
+                    Connect
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <main class="flex-grow p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto w-full">
+        
+        <!-- Metrics Chart -->
+        <section class="lg:col-span-2 bg-gray-800 rounded-lg p-5 border border-gray-700 shadow-sm flex flex-col">
+            <h3 class="text-lg font-medium text-gray-300 mb-4 border-b border-gray-700 pb-2">Live Metrics</h3>
+            <div class="flex-grow relative h-64">
+                <canvas id="metricsChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Anomaly Feed -->
+        <section class="bg-gray-800 rounded-lg p-5 border border-gray-700 shadow-sm flex flex-col h-full max-h-[400px] lg:max-h-full">
+            <h3 class="text-lg font-medium text-red-400 mb-4 border-b border-gray-700 pb-2 flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                AI Incident Intelligence
+            </h3>
+            <div id="anomaly-feed" class="flex-grow overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                <!-- Fallback text -->
+                <p class="text-gray-500 text-sm italic text-center mt-10">No recent anomalies detected.</p>
+            </div>
+        </section>
+
+        <!-- Log Stream -->
+        <section class="lg:col-span-3 bg-gray-800 rounded-lg p-5 border border-gray-700 shadow-sm flex flex-col h-96">
+            <h3 class="text-lg font-medium text-gray-300 mb-4 border-b border-gray-700 pb-2">Live Logs</h3>
+            <div id="log-stream" class="flex-grow overflow-y-auto bg-gray-900 rounded p-4 font-mono text-sm space-y-1 custom-scrollbar">
+                <div class="text-gray-500">Waiting for logs...</div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // Authentication state
+        let jwtToken = '';
+
+        // DOM Elements
+        const loginModal = document.getElementById('login-modal');
+        const loginForm = document.getElementById('login-form');
+        const tokenInput = document.getElementById('token');
+        const authStatus = document.getElementById('auth-status');
+        const anomalyFeed = document.getElementById('anomaly-feed');
+        const logStream = document.getElementById('log-stream');
+
+        // Chart Initialization
+        const ctx = document.getElementById('metricsChart').getContext('2d');
+        const metricsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Service Latency (ms)',
+                    data: [],
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+                    y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }
+                },
+                plugins: {
+                    legend: { labels: { color: '#9ca3af' } }
+                }
+            }
+        });
+
+        // Initialize Mock Chart Data (since WebSocket for metrics isn't implemented in the backend yet)
+        function generateChartData() {
+            let baseLatency = 45;
+            setInterval(() => {
+                if(!jwtToken) return;
+                const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+                baseLatency = baseLatency + (Math.random() * 20 - 10);
+                if(baseLatency < 5) baseLatency = 5;
+                if(baseLatency > 200) baseLatency = 200; // Fake spike simulation
+
+                metricsChart.data.labels.push(time);
+                metricsChart.data.datasets[0].data.push(baseLatency);
+
+                if (metricsChart.data.labels.length > 20) {
+                    metricsChart.data.labels.shift();
+                    metricsChart.data.datasets[0].data.shift();
+                }
+                metricsChart.update();
+            }, 2000);
+        }
+
+        // Handle Login
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            jwtToken = tokenInput.value.trim();
+            if (jwtToken) {
+                loginModal.style.display = 'none';
+                authStatus.textContent = "Authenticated :: Live";
+                authStatus.classList.remove('text-gray-400');
+                authStatus.classList.add('text-green-400');
+                connectWebSocket();
+                generateChartData();
+                
+                // Clear wait texts
+                logStream.innerHTML = '';
+            }
+        });
+
+        // Setup WebSocket
+        function connectWebSocket() {
+            // Note: In an actual implementation, the WSS endpoint would handle the stream.
+            // For now, we simulate the incoming data stream to fulfill the dashboard requirement.
+            // A real backend would have an endpoint like ws://localhost:3000/api/v1/stream
+            
+            // Simulating Log ingestion stream
+            setInterval(() => {
+                const logs = [
+                    { level: 'INFO', msg: 'Processed chunk 42a successfully' },
+                    { level: 'WARN', msg: 'Disk I/O latency elevated' },
+                    { level: 'INFO', msg: 'User session verified' },
+                    { level: 'ERROR', msg: 'Connection timeout to downstream DB' }
+                ];
+                const r = logs[Math.floor(Math.random() * logs.length)];
+                addLog(r.level, r.msg);
+            }, 1000);
+
+            // Simulating Anomaly Event
+            setTimeout(() => {
+                addAnomaly({
+                    title: 'Latency Spike (API Gateway)',
+                    summary: 'The system experienced a 400% surge in latency for /checkout endpoints.',
+                    likelyCause: 'A rogue pod deployment consumed underlying EC2 IOPS.',
+                    fix: 'Roll back pod deployment v1.4.2 or increase IOPS limit on volume vol-0abcd2.'
+                });
+            }, 10000);
+        }
+
+        function addLog(level, msg) {
+            const el = document.createElement('div');
+            const time = new Date().toISOString().split('T')[1].slice(0, -1);
+            let color = 'text-gray-300';
+            if (level === 'ERROR') color = 'text-red-400';
+            if (level === 'WARN') color = 'text-yellow-400';
+            
+            el.innerHTML = `<span class="text-gray-500">[${time}]</span> <span class="font-bold ${color}">${level}</span> ${msg}`;
+            logStream.appendChild(el);
+            logStream.scrollTop = logStream.scrollHeight;
+        }
+
+        function addAnomaly(data) {
+            // Remove fallback if present
+            if(anomalyFeed.querySelector('p')) anomalyFeed.innerHTML = '';
+
+            const el = document.createElement('div');
+            el.className = 'bg-gray-900 rounded p-4 border-l-4 border-red-500 flex flex-col gap-2 relative shadow-md animate-fade-in-up';
+            el.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <span class="font-semibold text-red-400 text-sm">${data.title}</span>
+                    <span class="text-xs text-gray-500">${new Date().toLocaleTimeString()}</span>
+                </div>
+                <div class="text-sm text-gray-300 mt-1"><span class="font-medium text-gray-400">AI Summary:</span> ${data.summary}</div>
+                <div class="text-sm text-gray-300"><span class="font-medium text-gray-400">Cause:</span> ${data.likelyCause}</div>
+                <div class="text-sm text-green-400 mt-2 p-2 bg-gray-800 rounded border border-green-900"><span class="font-bold">Fix:</span> ${data.fix}</div>
+            `;
+            // Prepend new anomalies
+            anomalyFeed.insertBefore(el, anomalyFeed.firstChild);
+        }
+    </script>
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        .animate-fade-in-up { animation: fadeInUp 0.4s ease-out forwards; }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</body>
+</html>

@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  vigilante:
+    build: .
+    ports:
+      - "3000:3000"
+      - "50051:50051"
+    environment:
+      - DATABASE_URL=postgres://vigilante:vigilante@postgres:5432/vigilante?sslmode=disable
+      - JWT_SECRET=super-secret-jwt-key
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - PORT=3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["serve"]
+
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: vigilante
+      POSTGRES_PASSWORD: vigilante
+      POSTGRES_DB: vigilante
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vigilante"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
