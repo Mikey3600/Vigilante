@@ -166,50 +166,39 @@
             container.innerHTML = `<div class="text-gray-500 text-sm italic text-center mt-2">${text}</div>`;
         }
 
-        async function fetchMetrics() {
-            const payload = await authorizedFetch(`/api/v1/metrics?service_id=${SERVICE_ID}&limit=20`);
-            if (!payload) return;
+        function renderError(container, text) {
+            container.innerHTML = `<div class="text-red-400 text-sm italic text-center mt-2">${text}</div>`;
+        }
 
-            const metrics = asArray(payload);
+        function updateMetrics(metrics) {
             if (metrics.length === 0) {
                 metricsChart.data.labels = ['No data yet'];
                 metricsChart.data.datasets[0].data = [0];
                 metricsChart.update();
                 return;
             }
-
-            const labels = [];
-            const values = [];
-            metrics.forEach((entry, idx) => {
+            const ordered = [...metrics].reverse();
+            metricsChart.data.labels = ordered.map((entry, idx) => {
                 const ts = entry.timestamp || entry.ts || entry.time || entry.created_at;
-                const label = ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : `#${idx + 1}`;
-                const value = Number(entry.latency_ms ?? entry.latency ?? entry.value ?? entry.metric_value ?? 0);
-                labels.push(label);
-                values.push(Number.isFinite(value) ? value : 0);
+                return ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : `#${idx + 1}`;
             });
-
-            metricsChart.data.labels = labels;
-            metricsChart.data.datasets[0].data = values;
+            metricsChart.data.datasets[0].data = ordered.map((entry) => {
+                const value = Number(entry.latency_ms ?? entry.latency ?? entry.value ?? entry.metric_value ?? 0);
+                return Number.isFinite(value) ? value : 0;
+            });
             metricsChart.update();
         }
 
-        async function fetchLogs() {
-            const payload = await authorizedFetch(`/api/v1/logs?service_id=${SERVICE_ID}&limit=50`);
-            if (!payload) return;
-
-            const logs = asArray(payload);
+        function updateLogs(logs) {
             if (logs.length === 0) {
                 renderNoData(logStream);
                 return;
             }
-
             logStream.innerHTML = '';
-            logs.forEach((log) => {
+            logs.slice().reverse().forEach((log) => {
                 const el = document.createElement('div');
                 const rawTs = log.timestamp || log.ts || log.time || log.created_at;
-                const time = rawTs
-                    ? new Date(rawTs).toISOString().split('T')[1].replace('Z', '')
-                    : new Date().toISOString().split('T')[1].replace('Z', '');
+                const time = rawTs ? new Date(rawTs).toISOString().split('T')[1].replace('Z', '') : 'unknown';
                 const level = String(log.level || 'INFO').toUpperCase();
                 const msg = log.message || log.msg || JSON.stringify(log);
 
@@ -223,26 +212,20 @@
             logStream.scrollTop = logStream.scrollHeight;
         }
 
-        async function fetchAnomalies() {
-            const payload = await authorizedFetch('/api/v1/anomalies?limit=5');
-            if (!payload) return;
-
-            const anomalies = asArray(payload);
+        function updateAnomalies(anomalies) {
             if (anomalies.length === 0) {
                 renderNoData(anomalyFeed);
                 return;
             }
-
             anomalyFeed.innerHTML = '';
             anomalies.forEach((data) => {
                 const el = document.createElement('div');
                 el.className = 'bg-gray-900 rounded p-4 border-l-4 border-red-500 flex flex-col gap-2 relative shadow-md animate-fade-in-up';
-
                 const ts = data.timestamp || data.ts || data.time || data.created_at;
-                const title = data.title || data.name || 'Detected anomaly';
-                const summary = data.summary || data.description || 'No summary provided.';
-                const likelyCause = data.likelyCause || data.cause || 'Unknown';
-                const fix = data.fix || data.remediation || 'No remediation provided.';
+                const title = data.title || data.name || data.anomaly_type || 'Detected anomaly';
+                const summary = data.summary || data.description || data.root_cause_summary || 'No summary provided.';
+                const likelyCause = data.likelyCause || data.cause || data.likely_cause || 'Unknown';
+                const fix = data.fix || data.remediation || data.suggested_fix || 'No remediation provided.';
 
                 el.innerHTML = `
                     <div class="flex justify-between items-start">
@@ -257,6 +240,14 @@
             });
         }
 
+        async function fetchDashboard() {
+            const payload = await authorizedFetch(`/api/v1/dashboard?service_id=${SERVICE_ID}`);
+            if (!payload) return;
+            updateMetrics(asArray(payload.metrics));
+            updateLogs(asArray(payload.logs));
+            updateAnomalies(asArray(payload.anomalies));
+        }
+
         function stopPolling() {
             [metricsIntervalId, logsIntervalId, anomaliesIntervalId].forEach((id) => {
                 if (id) clearInterval(id);
@@ -266,15 +257,23 @@
             anomaliesIntervalId = null;
         }
 
+        function handlePollingError(err) {
+            stopPolling();
+            authStatus.textContent = 'Backend offline';
+            authStatus.classList.remove('text-green-400');
+            authStatus.classList.add('text-red-400');
+            metricsChart.data.labels = ['Connection lost'];
+            metricsChart.data.datasets[0].data = [0];
+            metricsChart.update();
+            renderError(logStream, 'Backend unavailable. Polling stopped.');
+            renderError(anomalyFeed, 'Backend unavailable. Polling stopped.');
+            console.error(err);
+        }
+
         function startPolling() {
             stopPolling();
-            fetchMetrics().catch(console.error);
-            fetchLogs().catch(console.error);
-            fetchAnomalies().catch(console.error);
-
-            metricsIntervalId = setInterval(() => fetchMetrics().catch(console.error), 5000);
-            logsIntervalId = setInterval(() => fetchLogs().catch(console.error), 3000);
-            anomaliesIntervalId = setInterval(() => fetchAnomalies().catch(console.error), 5000);
+            fetchDashboard().catch(handlePollingError);
+            metricsIntervalId = setInterval(() => fetchDashboard().catch(handlePollingError), 3000);
         }
 
         // Handle Login

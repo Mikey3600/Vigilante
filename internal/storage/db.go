@@ -25,6 +25,15 @@ type MetricPoint struct {
 	Value                           float64
 	Labels                          []byte
 }
+
+type DashboardSnapshot struct {
+	Latency   float64       `json:"latency"`
+	CPU       float64       `json:"cpu"`
+	Memory    float64       `json:"memory"`
+	Metrics   []MetricPoint `json:"metrics"`
+	Logs      []LogEntry    `json:"logs"`
+	Anomalies []Anomaly     `json:"anomalies"`
+}
 type Anomaly struct {
 	ID, TenantID, ServiceID, AnomalyType, Description, RootCauseSummary, LikelyCause, SuggestedFix, Severity string
 	DetectedAt                                                                                               time.Time
@@ -106,6 +115,34 @@ func (db *DB) GetRecentAnomalies(ctx context.Context, tenantID string, limit int
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, nil
+}
+
+func (db *DB) GetRecentMetrics(ctx context.Context, tenantID, serviceID string, limit int) ([]MetricPoint, error) {
+	q := "SELECT m.time, s.tenant_id::text, m.service_id::text, m.metric_name, m.value, m.labels FROM metric_points m JOIN services s ON s.id=m.service_id WHERE s.tenant_id=$1"
+	args := []interface{}{tenantID}
+	if serviceID != "" {
+		q += " AND m.service_id=$2"
+		args = append(args, serviceID)
+	}
+	q += " ORDER BY m.time DESC"
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := db.Pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MetricPoint{}
+	for rows.Next() {
+		var m MetricPoint
+		if err := rows.Scan(&m.Time, &m.TenantID, &m.ServiceID, &m.MetricName, &m.Value, &m.Labels); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
 	}
 	return out, nil
 }
