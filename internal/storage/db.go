@@ -46,6 +46,7 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 // LogEntry struct
 type LogEntry struct {
 	Time      time.Time
+	TenantID  string
 	ServiceID string
 	Level     string
 	Message   string
@@ -63,6 +64,7 @@ func (db *DB) InsertLog(ctx context.Context, log LogEntry) error {
 // MetricPoint struct
 type MetricPoint struct {
 	Time       time.Time
+	TenantID   string
 	ServiceID  string
 	MetricName string
 	Value      float64
