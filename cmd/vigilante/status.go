@@ -7,25 +7,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Checks the runtime status of the API",
-	Run: func(cmd *cobra.Command, args *string) {
-		resp, err := http.Get("http://localhost:3000/health")
-		if err != nil {
-			fmt.Printf("Server unreachable: %v\n", err)
-			return
-		}
-		defer resp.Body.Close()
+var statusCmd = &cobra.Command{Use:"status", RunE: func(cmd *cobra.Command, args []string) error {
+	url := "http://localhost:"+getenv("HTTP_PORT","8080")+"/health"
+	resp,err:=http.Get(url); if err!=nil { return err }
+	defer resp.Body.Close(); fmt.Printf("HTTP\t%d\n", resp.StatusCode); return nil
+}}
 
-		if resp.StatusCode == 200 {
-			fmt.Println("Status: OK (200)")
-		} else {
-			fmt.Printf("Status Failed: (%d)\n", resp.StatusCode)
-		}
-	},
-}
+var versionCmd = &cobra.Command{Use:"version", Run: func(cmd *cobra.Command, args []string){ fmt.Println("vigilante 1.0.0") }}
 
-func init() {
-	rootCmd.AddCommand(statusCmd)
-}
+func init(){ rootCmd.AddCommand(statusCmd, versionCmd) }

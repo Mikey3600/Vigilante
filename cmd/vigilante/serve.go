@@ -2,49 +2,33 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/user/vigilante/internal/api"
-	"github.com/user/vigilante/internal/grpc"
+	igrpc "github.com/user/vigilante/internal/grpc"
 	"github.com/user/vigilante/internal/storage"
+	"golang.org/x/sync/errgroup"
 )
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Starts the Vigilante HTTP and gRPC servers",
-	Run: func(cmd *cobra.Command, args *string) {
-		dbUrl := os.Getenv("DATABASE_URL")
-		db, err := storage.NewDB(context.Background(), dbUrl)
-		if err != nil {
-			log.Fatalf("Failed to init db: %v", err)
-		}
-
-		go func() {
-			grpcPort := os.Getenv("GRPC_PORT")
-			if grpcPort == "" {
-				grpcPort = "50051"
-			}
-			log.Printf("Starting gRPC on :%s", grpcPort)
-			if err := grpc.Start(grpcPort, db); err != nil {
-				log.Fatalf("gRPC server failed: %v", err)
-			}
-		}()
-
-		port := os.Getenv("PORT")
-		if port == "" {
-			port = "3000"
-		}
-		
-		r := api.SetupRouter(db)
-		log.Printf("Starting HTTP on :%s", port)
-		if err := r.Run(":" + port); err != nil {
-			log.Fatalf("HTTP server failed: %v", err)
-		}
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(serveCmd)
-}
+var serveCmd = &cobra.Command{Use: "serve", Short: "Start servers", RunE: func(cmd *cobra.Command, args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM); defer stop()
+	db, err := storage.NewDB(ctx, os.Getenv("DATABASE_URL")); if err != nil { return err }
+	defer db.Close()
+	r := api.SetupRouter(db)
+	httpSrv := &http.Server{Addr: ":" + getenv("HTTP_PORT", "8080"), Handler: r}
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return igrpc.Start(gctx, getenv("GRPC_PORT", "50051"), db) })
+	g.Go(func() error { if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed { return err }; return nil })
+	g.Go(func() error { <-gctx.Done(); c,_:=context.WithTimeout(context.Background(),30*time.Second); return httpSrv.Shutdown(c) })
+	slog.Info("servers_started", "http", httpSrv.Addr)
+	return g.Wait()
+}}
+func getenv(k,d string) string { if v:=os.Getenv(k); v!="" {return v}; return d }
+func init(){ rootCmd.AddCommand(serveCmd); _ = fmt.Sprintf }
