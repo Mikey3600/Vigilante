@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/vigilante/internal/ai"
@@ -52,7 +53,7 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 
 		api.GET("/dashboard", func(c *gin.Context) {
 			_ = auth.GetTenantID(c)
-			
+
 			logs, _ := db.GetRecentLogsForTenant(c.Request.Context(), "22222222-2222-2222-2222-222222222222", 50)
 			if logs == nil {
 				logs = []storage.LogEntry{}
@@ -67,8 +68,8 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 			}
 
 			c.JSON(http.StatusOK, gin.H{
-				"logs": logs,
-				"metrics": metrics,
+				"logs":      logs,
+				"metrics":   metrics,
 				"anomalies": anomalies,
 			})
 		})
@@ -77,11 +78,11 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 			_ = auth.GetTenantID(c)
 
 			type AnalyzeRequest struct {
-				ServiceID string `json:"service_id"`
+				ServiceID   string `json:"service_id"`
 				AnomalyType string `json:"anomaly_type"`
 				Description string `json:"description"`
 			}
-			
+
 			var req AnalyzeRequest
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
@@ -93,17 +94,28 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch context logs"})
 				return
 			}
-			
+
 			if aiClient == nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "AI processor unavailable"})
 				return
 			}
 
-			report, err := aiClient.AnalyzeLogs(c.Request.Context(), logs, req.AnomalyType + ": " + req.Description)
+			report, err := aiClient.AnalyzeLogs(c.Request.Context(), logs, req.AnomalyType+": "+req.Description)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+
+			// Auto-save AI result to anomalies table so dashboard updates automatically
+			_ = db.InsertAnomaly(c.Request.Context(), storage.Anomaly{
+				ServiceID:        req.ServiceID,
+				DetectedAt:       time.Now(),
+				AnomalyType:      req.AnomalyType,
+				Description:      req.Description,
+				RootCauseSummary: report.Summary,
+				LikelyCause:      report.LikelyCause,
+				SuggestedFix:     report.SuggestedFix,
+			})
 
 			c.JSON(http.StatusOK, report)
 		})
