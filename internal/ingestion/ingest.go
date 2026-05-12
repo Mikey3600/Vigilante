@@ -31,7 +31,7 @@ type BatchMetricPayload struct {
 
 func ProcessLogs(ctx context.Context, db *storage.DB, tenantID string, payload BatchLogPayload) error {
 	if payload.ServiceID == "" {
-		return errors.New("service_id required")
+		errors.New("service_id required")
 	}
 
 	for _, l := range payload.Logs {
@@ -44,7 +44,7 @@ func ProcessLogs(ctx context.Context, db *storage.DB, tenantID string, payload B
 
 			t, err = time.Parse(time.RFC3339, l.Time)
 			if err != nil {
-				return err
+				continue
 			}
 		}
 
@@ -58,7 +58,7 @@ func ProcessLogs(ctx context.Context, db *storage.DB, tenantID string, payload B
 		})
 
 		if err != nil {
-			return err
+			continue
 		}
 	}
 
@@ -67,7 +67,7 @@ func ProcessLogs(ctx context.Context, db *storage.DB, tenantID string, payload B
 
 func ProcessMetrics(ctx context.Context, db *storage.DB, tenantID string, payload BatchMetricPayload) error {
 	if payload.ServiceID == "" {
-		return errors.New("service_id required")
+		errors.New("service_id required")
 	}
 
 	for _, m := range payload.Metrics {
@@ -80,7 +80,7 @@ func ProcessMetrics(ctx context.Context, db *storage.DB, tenantID string, payloa
 
 			t, err = time.Parse(time.RFC3339, m.Time)
 			if err != nil {
-				return err
+				continue
 			}
 		}
 
@@ -94,7 +94,7 @@ func ProcessMetrics(ctx context.Context, db *storage.DB, tenantID string, payloa
 		})
 
 		if err != nil {
-			return err
+			continue
 		}
 	}
 

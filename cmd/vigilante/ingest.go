@@ -16,7 +16,7 @@ var inputFile string
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
 	Short: "Sends a log payload file to the running HTTP API",
-	Run: func(cmd *cobra.Command, args *string) {
+	Run: func(cmd *cobra.Command, args []string) {
 		if inputFile == "" {
 			log.Fatal("Must provide --file flag")
 		}

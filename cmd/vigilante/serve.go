@@ -15,7 +15,7 @@ import (
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Starts the Vigilante HTTP and gRPC servers",
-	Run: func(cmd *cobra.Command, args *string) {
+	Run: func(cmd *cobra.Command, args []string) {
 		dbUrl := os.Getenv("DATABASE_URL")
 		db, err := storage.NewDB(context.Background(), dbUrl)
 		if err != nil {

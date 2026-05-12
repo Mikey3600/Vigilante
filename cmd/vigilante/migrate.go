@@ -12,7 +12,7 @@ import (
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Runs database schema migrations",
-	Run: func(cmd *cobra.Command, args *string) {
+	Run: func(cmd *cobra.Command, args []string) {
 		dbUrl := os.Getenv("DATABASE_URL")
 		db, err := storage.NewDB(context.Background(), dbUrl)
 		if err != nil {

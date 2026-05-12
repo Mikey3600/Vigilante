@@ -10,7 +10,7 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Checks the runtime status of the API",
-	Run: func(cmd *cobra.Command, args *string) {
+	Run: func(cmd *cobra.Command, args []string) {
 		resp, err := http.Get("http://localhost:3000/health")
 		if err != nil {
 			fmt.Printf("Server unreachable: %v\n", err)

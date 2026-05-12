@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +30,7 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			if err := ingestion.ProcessLogs(c.Request.Context(), db, payload); err != nil {
+			if err := ingestion.ProcessLogs(c.Request.Context(), db, "default", payload); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process logs"})
 				return
 			}
@@ -44,25 +43,25 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			if err := ingestion.ProcessMetrics(c.Request.Context(), db, payload); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process metrics"})
+			if err := ingestion.ProcessMetrics(c.Request.Context(), db, "default", payload); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{"status": "accepted"})
 		})
 
 		api.GET("/dashboard", func(c *gin.Context) {
-			tenantID := auth.GetTenantID(c)
+			_ = auth.GetTenantID(c)
 			
-			logs, _ := db.GetRecentLogsForTenant(c.Request.Context(), tenantID, 50)
+			logs, _ := db.GetRecentLogsForTenant(c.Request.Context(), "default", 50)
 			if logs == nil {
 				logs = []storage.LogEntry{}
 			}
-			metrics, _ := db.GetRecentMetricsForTenant(c.Request.Context(), tenantID, 50)
+			metrics, _ := db.GetRecentMetricsForTenant(c.Request.Context(), "default", 50)
 			if metrics == nil {
 				metrics = []storage.MetricPoint{}
 			}
-			anomalies, _ := db.GetRecentAnomaliesForTenant(c.Request.Context(), tenantID, 10)
+			anomalies, _ := db.GetRecentAnomaliesForTenant(c.Request.Context(), "default", 10)
 			if anomalies == nil {
 				anomalies = []storage.Anomaly{}
 			}
@@ -75,7 +74,7 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 		})
 
 		api.POST("/analyze", func(c *gin.Context) {
-			tenantID := auth.GetTenantID(c)
+			_ = auth.GetTenantID(c)
 
 			type AnalyzeRequest struct {
 				ServiceID string `json:"service_id"`

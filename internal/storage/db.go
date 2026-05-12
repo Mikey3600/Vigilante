@@ -56,8 +56,8 @@ type LogEntry struct {
 // InsertLog inserts a log entry into the timeseries DB.
 func (db *DB) InsertLog(ctx context.Context, log LogEntry) error {
 	_, err := db.Pool.Exec(ctx,
-		"INSERT INTO log_entries (time, service_id, level, message, metadata) VALUES ($1, $2, $3, $4, $5)",
-		log.Time, log.ServiceID, log.Level, log.Message, log.Metadata)
+		"INSERT INTO log_entries (time, tenant_id, service_id, level, message, metadata) VALUES ($1, $2, $3, $4, $5, $6)",
+		log.Time, log.TenantID, log.ServiceID, log.Level, log.Message, log.Metadata)
 	return err
 }
 
@@ -74,8 +74,8 @@ type MetricPoint struct {
 // InsertMetric inserts a metric data point into the timeseries DB.
 func (db *DB) InsertMetric(ctx context.Context, metric MetricPoint) error {
 	_, err := db.Pool.Exec(ctx,
-		"INSERT INTO metric_points (time, service_id, metric_name, value, labels) VALUES ($1, $2, $3, $4, $5)",
-		metric.Time, metric.ServiceID, metric.MetricName, metric.Value, metric.Labels)
+		"INSERT INTO metric_points (time, tenant_id, service_id, metric_name, value, labels) VALUES ($1, $2, $3, $4, $5, $6)",
+		metric.Time, metric.TenantID, metric.ServiceID, metric.MetricName, metric.Value, metric.Labels)
 	return err
 }
 
@@ -125,7 +125,7 @@ func (db *DB) GetRecentLogsForTenant(ctx context.Context, tenantID string, limit
 	rows, err := db.Pool.Query(ctx, 
 		`SELECT time, service_id, level, message, metadata 
 		FROM log_entries 
-		WHERE service_id IN (SELECT id FROM services WHERE tenant_id = $1) 
+		WHERE tenant_id = $1 
 		ORDER BY time DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func (db *DB) GetRecentMetricsForTenant(ctx context.Context, tenantID string, li
 	rows, err := db.Pool.Query(ctx, 
 		`SELECT time, service_id, metric_name, value, labels 
 		FROM metric_points 
-		WHERE service_id IN (SELECT id FROM services WHERE tenant_id = $1) 
+		WHERE tenant_id = $1 
 		ORDER BY time DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
@@ -169,7 +169,7 @@ func (db *DB) GetRecentAnomaliesForTenant(ctx context.Context, tenantID string, 
 	rows, err := db.Pool.Query(ctx, 
 		`SELECT id, service_id, detected_at, anomaly_type, description, root_cause_summary, likely_cause, suggested_fix 
 		FROM anomalies 
-		WHERE service_id IN (SELECT id FROM services WHERE tenant_id = $1) 
+		WHERE tenant_id = $1 
 		ORDER BY detected_at DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
