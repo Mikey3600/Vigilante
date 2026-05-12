@@ -1,73 +1,95 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"os"
+	"strings"
 
-	"github.com/google/generative-ai-go/genai"
 	"github.com/user/vigilante/internal/storage"
-	"google.golang.org/api/option"
 )
 
-// Client wraps the Gemini API interface.
-type Client struct {
-	cli *genai.Client
-}
+type Client struct{}
 
-// NewClient initializes the Gemini client mapping it to the provided API key.
-func NewClient(ctx context.Context) (*Client, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
-	}
-
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
-	if err != nil {
-		return nil, fmt.Errorf("failed to init genai client: %w", err)
-	}
-
-	return &Client{cli: client}, nil
-}
-
-// RootCauseReport maps the desired JSON format from Gemini.
 type RootCauseReport struct {
 	Summary      string `json:"summary"`
 	LikelyCause  string `json:"likely_cause"`
 	SuggestedFix string `json:"suggested_fix"`
 }
 
-// AnalyzeLogs asks Gemini 1.5 Flash to determine the root cause of an anomaly based on recent logs.
+func NewClient(ctx context.Context) (*Client, error) {
+	if os.Getenv("GROQ_API_KEY") == "" {
+		return nil, fmt.Errorf("GROQ_API_KEY is not set")
+	}
+	return &Client{}, nil
+}
+
 func (c *Client) AnalyzeLogs(ctx context.Context, logs []storage.LogEntry, anomalyMeta string) (*RootCauseReport, error) {
-	model := c.cli.GenerativeModel("gemini-1.5-flash")
-	model.ResponseMIMEType = "application/json"
+	apiKey := os.Getenv("GROQ_API_KEY")
+	url := "https://api.groq.com/openai/v1/chat/completions"
 
-	prompt := fmt.Sprintf(`You are a site reliability engineer diagnosing an issue.
+	prompt := fmt.Sprintf(`You are a site reliability engineer diagnosing an incident.
 Anomaly: %s
-Logs Context:
-%v
-Generate a JSON object with 'summary', 'likely_cause', and 'suggested_fix'.
-`, anomalyMeta, logs)
+Recent logs: %v
+Respond ONLY with a valid JSON object with exactly these three fields: summary, likely_cause, suggested_fix. No markdown, no backticks, just raw JSON.`, anomalyMeta, logs)
 
-	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	body := map[string]any{
+		"model": "llama-3.1-8b-instant",
+		"messages": []map[string]any{
+			{"role": "user", "content": prompt},
+		},
+		"temperature": 0.3,
+	}
+
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	if len(resp.Candidates) == 0 {
-		return nil, fmt.Errorf("no response candidates generated")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
 	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	log.Printf("GROQ RAW: %s", string(data))
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("parse error: %w", err)
+	}
+	if len(result.Choices) == 0 {
+		return nil, fmt.Errorf("no choices: %s", string(data))
+	}
+
+	text := result.Choices[0].Message.Content
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimSuffix(text, "```")
+	text = strings.TrimSpace(text)
 
 	var report RootCauseReport
-	part := resp.Candidates[0].Content.Parts[0]
-	
-	switch p := part.(type) {
-	case genai.Text:
-		if err := json.Unmarshal([]byte(p), &report); err != nil {
-			return nil, err
+	if err := json.Unmarshal([]byte(text), &report); err != nil {
+		report = RootCauseReport{
+			Summary:      text,
+			LikelyCause:  "See summary",
+			SuggestedFix: "See summary",
 		}
 	}
-
 	return &report, nil
 }

@@ -30,7 +30,7 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			if err := ingestion.ProcessLogs(c.Request.Context(), db, "default", payload); err != nil {
+			if err := ingestion.ProcessLogs(c.Request.Context(), db, "22222222-2222-2222-2222-222222222222", payload); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process logs"})
 				return
 			}
@@ -43,7 +43,7 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			if err := ingestion.ProcessMetrics(c.Request.Context(), db, "default", payload); err != nil {
+			if err := ingestion.ProcessMetrics(c.Request.Context(), db, "22222222-2222-2222-2222-222222222222", payload); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -53,15 +53,15 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 		api.GET("/dashboard", func(c *gin.Context) {
 			_ = auth.GetTenantID(c)
 			
-			logs, _ := db.GetRecentLogsForTenant(c.Request.Context(), "default", 50)
+			logs, _ := db.GetRecentLogsForTenant(c.Request.Context(), "22222222-2222-2222-2222-222222222222", 50)
 			if logs == nil {
 				logs = []storage.LogEntry{}
 			}
-			metrics, _ := db.GetRecentMetricsForTenant(c.Request.Context(), "default", 50)
+			metrics, _ := db.GetRecentMetricsForTenant(c.Request.Context(), "22222222-2222-2222-2222-222222222222", 50)
 			if metrics == nil {
 				metrics = []storage.MetricPoint{}
 			}
-			anomalies, _ := db.GetRecentAnomaliesForTenant(c.Request.Context(), "default", 10)
+			anomalies, _ := db.GetRecentAnomaliesForTenant(c.Request.Context(), "22222222-2222-2222-2222-222222222222", 10)
 			if anomalies == nil {
 				anomalies = []storage.Anomaly{}
 			}
@@ -101,7 +101,7 @@ func SetupRouter(db *storage.DB, aiClient *ai.Client) *gin.Engine {
 
 			report, err := aiClient.AnalyzeLogs(c.Request.Context(), logs, req.AnomalyType + ": " + req.Description)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "AI analysis failed"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 
