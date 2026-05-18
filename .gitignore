@@ -8,3 +8,5 @@ coverage/
 !.env.example
 # Ignore compiled Windows binaries
 *.exe
+vigilante.exe~
+*.exe~
