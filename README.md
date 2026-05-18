@@ -3,7 +3,7 @@
 ![Go Version](https://img.shields.io/badge/go-1.22-00ADD8?logo=go&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-active-brightgreen)
- 
+![Vigilante Dashboard](docs/dashboard.png)
 Self-hostable backend observability platform. Vigilante ingests logs and metrics from your microservices, detects anomalies automatically, and uses an LLM to generate incident summaries with root cause analysis and fix suggestions — all from your own infrastructure.
  
 No third-party SaaS. No data leaves your environment unless you call the Groq API.
